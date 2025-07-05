@@ -5,8 +5,6 @@ import { Button } from './components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './components/ui/dialog'
 import { Input } from './components/ui/input'
-import { Label } from './components/ui/label'
-
 import { ScrollArea } from './components/ui/scroll-area'
 import { Separator } from './components/ui/separator'
 import { Badge } from './components/ui/badge'
@@ -23,7 +21,6 @@ interface VoiceNote {
 
 interface DictionaryEntry {
   word: string
-  replacement: string
 }
 
 function App() {
@@ -33,7 +30,6 @@ function App() {
   const [voiceNotes, setVoiceNotes] = useState<VoiceNote[]>([])
   const [dictionary, setDictionary] = useState<DictionaryEntry[]>([])
   const [newWord, setNewWord] = useState('')
-  const [newReplacement, setNewReplacement] = useState('')
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
   const [recordingStart, setRecordingStart] = useState<number>(0)
   const [user, setUser] = useState<{ id: string; email: string } | null>(null)
@@ -157,26 +153,25 @@ function App() {
         language: 'en'
       })
 
-      // Apply dictionary replacements
-      let processedText = originalText
-      dictionary.forEach(entry => {
-        const regex = new RegExp(`\\b${entry.word}\\b`, 'gi')
-        processedText = processedText.replace(regex, entry.replacement)
-      })
+      // Compose preferred words prompt
+      const preferredWords = dictionary.map(entry => entry.word).filter(Boolean)
+      const processedText = originalText
 
-      // Grammar correction and formatting
+      // Grammar correction and formatting, with preferred words
       const { text: correctedText } = await blink.ai.generateText({
-        prompt: `Please correct grammar, improve formatting, and make this text more professional while preserving the original meaning and intent:
-
+        prompt: `You are transcribing a voice note for a user. Please correct grammar, improve formatting, and make this text more professional while preserving the original meaning and intent.
+Here is the raw transcript:
 "${processedText}"
-
+The user has provided a list of special words and spellings they frequently use. When possible, prioritize using these words in the transcript:
+${preferredWords.length ? preferredWords.join(', ') : '[none]'}
 Rules:
 - Fix grammar and spelling errors
 - Improve sentence structure
 - Add proper punctuation
 - Make it more professional but keep the original tone
+- Use the user's preferred words above if they fit the context
 - Don't change the core meaning
-- Return only the corrected text without explanations`
+- Return only the corrected text without explanations.`
       })
 
       const newNote: VoiceNote = {
@@ -210,23 +205,17 @@ Rules:
   }
 
   const addDictionaryEntry = async () => {
-    if (!newWord.trim() || !newReplacement.trim()) return
-
+    const word = newWord.trim()
+    if (!word) return
     try {
-      const entry = {
-        word: newWord.trim(),
-        replacement: newReplacement.trim(),
-        user_id: user.id
-      }
-
+      const entry = { word, user_id: user.id }
       await blink.db.dictionary_entries.create(entry)
-      setDictionary(prev => [...prev, entry])
+      setDictionary(prev => [...prev, { word }])
       setNewWord('')
-      setNewReplacement('')
-      toast.success('Dictionary entry added!')
+      toast.success('Word added!')
     } catch (error) {
-      console.error('Error adding dictionary entry:', error)
-      toast.error('Failed to add dictionary entry')
+      console.error('Error adding dictionary word:', error)
+      toast.error('Failed to add word')
     }
   }
 
@@ -234,10 +223,10 @@ Rules:
     try {
       await blink.db.dictionary_entries.delete(word)
       setDictionary(prev => prev.filter(entry => entry.word !== word))
-      toast.success('Dictionary entry deleted!')
+      toast.success('Word deleted!')
     } catch (error) {
-      console.error('Error deleting dictionary entry:', error)
-      toast.error('Failed to delete dictionary entry')
+      console.error('Error deleting dictionary word:', error)
+      toast.error('Failed to delete word')
     }
   }
 
@@ -369,49 +358,43 @@ Rules:
                 Manage Dictionary ({dictionary.length})
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>Custom Dictionary</DialogTitle>
+                <DialogTitle>Preferred Words</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="word">Word/Phrase</Label>
-                    <Input
-                      id="word"
-                      value={newWord}
-                      onChange={(e) => setNewWord(e.target.value)}
-                      placeholder="e.g., gonna"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="replacement">Replacement</Label>
-                    <Input
-                      id="replacement"
-                      value={newReplacement}
-                      onChange={(e) => setNewReplacement(e.target.value)}
-                      placeholder="e.g., going to"
-                    />
-                  </div>
-                </div>
-                <Button onClick={addDictionaryEntry} className="w-full">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Entry
-                </Button>
+                <form
+                  onSubmit={e => {
+                    e.preventDefault();
+                    addDictionaryEntry();
+                  }}
+                  className="flex gap-2"
+                >
+                  <Input
+                    id="word"
+                    value={newWord}
+                    onChange={e => setNewWord(e.target.value)}
+                    placeholder="Add a word (press Enter)"
+                    autoFocus
+                  />
+                  <Button type="submit" variant="default">
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </form>
                 <Separator />
                 <ScrollArea className="h-64">
                   <div className="space-y-2">
+                    {dictionary.length === 0 && (
+                      <div className="text-slate-400 text-sm text-center py-8">No preferred words yet.</div>
+                    )}
                     {dictionary.map((entry) => (
                       <div key={entry.word} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
-                        <div className="flex items-center space-x-3">
-                          <Badge variant="outline">{entry.word}</Badge>
-                          <span className="text-sm text-slate-600">→</span>
-                          <span className="text-sm">{entry.replacement}</span>
-                        </div>
+                        <Badge variant="outline">{entry.word}</Badge>
                         <Button
                           size="sm"
                           variant="ghost"
                           onClick={() => deleteDictionaryEntry(entry.word)}
+                          aria-label={`Remove ${entry.word}`}
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
