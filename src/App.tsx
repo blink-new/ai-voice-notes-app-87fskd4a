@@ -36,7 +36,6 @@ function App() {
   const [newReplacement, setNewReplacement] = useState('')
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
   const [recordingStart, setRecordingStart] = useState<number>(0)
-  const [audioChunks, setAudioChunks] = useState<Blob[]>([])
   const [user, setUser] = useState<{ id: string; email: string } | null>(null)
 
   useEffect(() => {
@@ -83,21 +82,22 @@ function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const recorder = new MediaRecorder(stream)
       
+      const chunks: Blob[] = []
+      
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          setAudioChunks(prev => [...prev, event.data])
+          chunks.push(event.data)
         }
       }
 
       recorder.onstop = async () => {
         const duration = Date.now() - recordingStart
-        await processRecording(duration)
+        await processRecording(chunks, duration)
       }
 
       setMediaRecorder(recorder)
-      setAudioChunks([])
       setRecordingStart(Date.now())
-      recorder.start()
+      recorder.start(100) // Collect data every 100ms
       setIsRecording(true)
       toast.success('Recording started')
     } catch (error) {
@@ -116,21 +116,40 @@ function App() {
     }
   }
 
-  const processRecording = async (duration: number) => {
+  const processRecording = async (audioChunks: Blob[], duration: number) => {
     try {
-      const audioBlob = new Blob(audioChunks, { type: 'audio/wav' })
+      // Verify we have audio data
+      if (!audioChunks || audioChunks.length === 0) {
+        throw new Error('No audio data recorded')
+      }
+
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
       
+      // Verify blob has content
+      if (audioBlob.size === 0) {
+        throw new Error('Audio recording is empty')
+      }
+      
+      console.log('Audio blob size:', audioBlob.size, 'bytes')
+      console.log('Number of chunks:', audioChunks.length)
+       
       // Convert to base64 for transcription
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => {
           const dataUrl = reader.result as string
           const base64Data = dataUrl.split(',')[1]
+          if (!base64Data || base64Data.length === 0) {
+            reject(new Error('Failed to convert audio to base64'))
+            return
+          }
           resolve(base64Data)
         }
         reader.onerror = reject
         reader.readAsDataURL(audioBlob)
       })
+
+      console.log('Base64 length:', base64.length)
 
       // Transcribe audio
       const { text: originalText } = await blink.ai.transcribeAudio({
